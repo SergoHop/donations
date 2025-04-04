@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"gorm.io/gorm"
+	
 	"mydonate/internal/models"
 	"mydonate/internal/interfaces"
 )
@@ -13,8 +14,8 @@ type userRepository struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) interfaces.UserRepository {
-	return &userRepository{db: db}
+func NewUserRepository(db *gorm.DB) interfaces.UserRepository { // <-- Принимаем db
+    return &userRepository{db: db}
 }
 // Create создает нового пользователя в базе данных.
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {

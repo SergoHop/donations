@@ -9,13 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 
 	"mydonate/internal/config"
 	"mydonate/internal/handlers"
-	
-	"mydonate/internal/models"
+	"mydonate/pkg/database"
 	"mydonate/internal/repositories"
 	"mydonate/internal/services"
 )
@@ -30,17 +27,9 @@ func main() {
 	// Загрузка конфигурации
 	cfg := config.LoadConfig()
 
-	// Инициализация GORM
-	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
+	database.InitDB(cfg)
 
-	// AutoMigrate - создает таблицы на основе структуры моделей
-	err = db.AutoMigrate(&models.User{})
-	if err != nil {
-		log.Fatalf("Failed to migrate database: %v", err)
-	}
+	db := database.GetDB()
 
 	// Инициализация репозитория
 	userRepository := repositories.NewUserRepository(db)
