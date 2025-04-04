@@ -1,64 +1,63 @@
 package postgres
 
 import (
+	"context"
+	"fmt"
 	"gorm.io/gorm"
 	"mydonate/internal/models"
-	
+	"mydonate/internal/interfaces"
 )
 
-type UserRepository struct {
+
+type userRepository struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(db *gorm.DB) interfaces.UserRepository {
+	return &userRepository{db: db}
 }
 // Create создает нового пользователя в базе данных.
-func (r *UserRepository) Create(user *models.User) error {
-	return r.db.Create(user).Error
+func (r *userRepository) Create(ctx context.Context, user *models.User) error {
+	result := r.db.WithContext(ctx).Create(user)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create user: %w", result.Error)
+	}
+	return nil
 }
 // получает пользователя по имаил
-func (r *UserRepository)  GetByEmail(email string) (*models.User, error) {
-	var user models.User //просто переменная для хранения результата
-	if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
-	if err == gorm.ErrRecordNotFound {
-		return nil,nil
-	}
-	return nil,err
-	}
-	return &user,nil
-}
-
-func (r *UserRepository)  GetByID(id uint) (*models.User, error) {
+func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	err := r.db.First(&user, id).Error
-	if err != nil{
-		return nil, err
+	result := r.db.WithContext(ctx).Where("email = ?", email).First(&user)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, nil // Пользователь не найден
+		}
+		return nil, fmt.Errorf("ошибка с имаилом: %w", result.Error)
 	}
 	return &user, nil
 }
 
-func (r *UserRepository)  UpdateVerificationCode(email string, code string) error {
-	//тут не нужена переменная, апдейт возращает СТАТУС
-	result := r.db.Model(&models.User{}).Where("email = ?", email).Update("index", code)
-
-	if result.Error != nil{
-		return result.Error
+func (r *userRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	var user models.User
+	result := r.db.WithContext(ctx).First(&user, id)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, nil // Пользователь не найден
+		}
+		return nil, fmt.Errorf("ошибка с айди: %w", result.Error)
 	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound //  Пользователь с таким email не найден
+	return &user, nil
+}
+
+func (r *userRepository) Update(ctx context.Context, user *models.User) error {
+	result := r.db.WithContext(ctx).Save(user)
+	if result.Error != nil {
+		return fmt.Errorf("ошибка с обновление пользователя: %w", result.Error)
 	}
 	return nil
 }
 
-func (r *UserRepository)  MarkVerified(email string) error {
-	result := r.db.Model(&models.User{}).Where("email = ?", email).Update("verified", true)
-	if result.Error != nil{
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound //  Пользователь с таким email не найден
-	}
+func (r *userRepository) Verify(ctx context.Context, email string, verificationCode string) error {
 	return nil
 }
 

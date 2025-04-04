@@ -14,5 +14,6 @@ type User struct{
 	Email string             `gorm:"uniqueIndex" json:"enail"`
 	VerificationCode string  `gorm:"index"`
 	Verified bool            `gorm:"default:false"`
+	Salt string				 `json:"-"`
 }
 
