@@ -1,41 +1,72 @@
 package main
 
 import (
+	
 	"log"
-	"net/http"
+	
+	"os"
 
 	"github.com/gin-gonic/gin"
-
-	"mydonate/internal/handlers"
-	"mydonate/internal/services"
-	"mydonate/internal/repositories"
-	"database/sql"
-	"os"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
+	"mydonate/internal/config"
+	"mydonate/internal/handlers"
+	
+	"mydonate/internal/models"
+	"mydonate/internal/repositories"
+	"mydonate/internal/services"
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL")
-	db, err := sql.Open("postgres", dbURL)
-    if err != nil {
-        log.Fatal(err)
-}
+	// Загрузка переменных окружения из .env файла
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Error loading .env file: %v", err)
+	}
 
-defer db.Close()
+	// Загрузка конфигурации
+	cfg := config.LoadConfig()
 
-    userRepository := repositories.NewUserRepository(db) // Создаем репозиторий
-    userService := services.NewUserService(userRepository)  // Создаем сервис
-    userHandler := handlers.NewUserHandler(userService)   // Создаем handler
+	// Инициализация GORM
+	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
-	// Создаем экземпляр Gin
-	r := gin.Default()
+	// AutoMigrate - создает таблицы на основе структуры моделей
+	err = db.AutoMigrate(&models.User{})
+	if err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
 
-	// Регистрируем handlers для различных маршрутов
-	r.POST("/users", userHandler.CreateUserHandler)
-	r.GET("/users/:id", userHandler.GetUserByIDHandler)
-	r.GET("/users", userHandler.GetUserByEmailHandler)
+	// Инициализация репозитория
+	userRepository := repositories.NewUserRepository(db)
 
-	// Запускаем HTTP-сервер
-	log.Println("сервак запущен на порту: 8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	// Инициализация сервиса
+	userService := services.NewUserService(userRepository)
+
+	// Инициализация обработчиков
+	userHandler := handlers.NewUserHandler(userService)
+
+	// Создание Gin router
+	router := gin.Default()
+
+	// Определение маршрутов
+	router.POST("/register", userHandler.CreateUserHandler)
+	router.GET("/verify", userHandler.VerifyEmailHandler)
+	router.GET("/users/:id", userHandler.GetUserByIDHandler)
+	router.GET("/users", userHandler.GetUserByEmailHandler)
+
+	// Запуск сервера
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+		log.Printf("Defaulting to port %s", port)
+	}
+
+	log.Printf("Server is running on port %s", port)
+	log.Fatal(router.Run(":" + port))
 }

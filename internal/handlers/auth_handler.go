@@ -22,7 +22,7 @@ type UserHandler struct{
     userService interfaces.UserService
 }
 
-func NewUserHadler(userService interfaces.UserService) *UserHandler{
+func NewUserHandler(userService interfaces.UserService) *UserHandler{
     return &UserHandler{userService: userService}
 }
 // тута мы генерируем случайный код верификации.

@@ -1,15 +1,17 @@
 package config
 
-import (
-    "log"
-    "os"
+import("os")
 
-    "github.com/joho/godotenv"
-)
+type Config struct {
+    DatabaseURL string
+    
+}
 
-func LoadConfig() {
-    err := godotenv.Load()
-    if err != nil && os.Getenv("ENVIRONMENT") != "production" {
-        log.Println("Error loading .env file")
+// LoadConfig загружает конфигурацию из переменных окружения или файла.
+func LoadConfig() Config {  
+    cfg := Config{
+        DatabaseURL: os.Getenv("DATABASE_URL"),
+        
     }
+    return cfg
 }
