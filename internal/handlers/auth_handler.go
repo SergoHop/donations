@@ -1,234 +1,125 @@
 package handlers
 
 import (
-	"encoding/base64"
-	"fmt"
 	"log"
-	"math/rand"
-	"mydonate/internal/interfaces"
-	"mydonate/internal/models"
 	"net/http"
-	"net/smtp"
-	"os"
-	
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
-	"github.com/jordan-wright/email"
-	"golang.org/x/crypto/bcrypt"
+	"mydonate/internal/models"
+	"mydonate/internal/interfaces"
 )
 
-type UserHandler struct{
-    userService interfaces.UserService
+type UserHandler struct {
+	userService interfaces.UserService
 }
 
-func NewUserHandler(userService interfaces.UserService) *UserHandler{
-    return &UserHandler{userService: userService}
-}
-// тута мы генерируем случайный код верификации.
-func GenerateVerificationCode() (string, error){
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
-	if err != nil{
-		return "", err
-
-	}
-	return base64.StdEncoding.EncodeToString(b), nil
+func NewUserHandler(userService interfaces.UserService) *UserHandler {
+	return &UserHandler{userService: userService}
 }
 
-func HashPassword(password string) (string, string, error){
-	saltBytes := make([]byte, 16)
-	_, err := rand.Read(saltBytes)
-	if err != nil{
-		return "", "", nil
-	}
-	salt := base64.StdEncoding.EncodeToString(saltBytes)
-	hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(password+salt), bcrypt.DefaultCost)
-	if err != nil {
-		return "", "", err
-	}
-	hashedPassword := string(hashedPasswordBytes)
-	return hashedPassword, salt, nil
-}
-// отправляет email с кодом верификации.
-func SendVerificationEmail(emailAddress string, verificationCode string) error {
-	from := os.Getenv("SMTP_FROM")
-	password := os.Getenv("SMTP_PASSWORD")
-	smtpServer := os.Getenv("SMTP_SERVER")
-	smtpPort := os.Getenv("SMTP_PORT")
-
-	e := email.NewEmail()
-	e.From = from
-	e.To = []string{emailAddress}
-	e.Subject = "Подтверждение регистрации"
-	e.HTML = []byte(fmt.Sprintf(`<h1>Здравствуйте!</h1><p>Для подтверждения регистрации, перейдите по ссылке: <a href="http://localhost:8080/verify?email=%s&code=%s">Подтвердить</a></p>`, emailAddress, verificationCode))
-
-	auth := smtp.PlainAuth("", from, password, smtpServer)
-	err := e.Send(smtpServer+":"+smtpPort, auth)
-	if err != nil {
-		return err
-	}
-
-	log.Println("Verification email sent to " + emailAddress)
-	return nil
-}
-
-// CreateUserHandler обрабатывает запрос на создание нового пользователя.
-// POST /users
+// CreateUserHandler обрабатывает запрос на создание пользователя.
+// POST /register
 func (h *UserHandler) CreateUserHandler(c *gin.Context) {
-	var user models.User
-
-	// Декодируем JSON из тела запроса в структуру User
-	if err := c.ShouldBindJSON(&user); err != nil {
+	var body models.RegisterBody
+	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	// Хешируем пароль
-	hashedPassword, salt, err := HashPassword(user.Password)
-	if err != nil {
-		log.Printf("Error hashing password: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
-		return
+	user := models.User{
+		Username: body.User,
+		Password: body.Password,
+		Email: body.Email,
 	}
 
-	// Генерируем код верификации
-	verificationCode, err := GenerateVerificationCode()
-	if err != nil {
-		log.Printf("Error generating verification code: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate verification code"})
-		return
-	}
-
-	// Обновляем данные пользователя
-	user.Password = hashedPassword
-	user.Salt = salt
-	user.VerificationCode = verificationCode
-	user.Verified = false // Устанавливаем статус "не подтвержден"
-
-	// Создаем пользователя в базе данных (через сервис)
-	err = h.userService.Create(c.Request.Context(), &user)
+	err := h.userService.Create(c.Request.Context(), &user)
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
-
-		// Проверяем, является ли ошибка ошибкой валидации
-		validationErrors, ok := err.(validator.ValidationErrors)
-		if ok {
-			// Создаем карту ошибок валидации
-			errorMap := make(map[string]string)
-			for _, fieldError := range validationErrors {
-				errorMap[fieldError.Field()] = fieldError.Tag() // Сохраняем имя поля и тег валидации
-			}
-			c.JSON(http.StatusBadRequest, gin.H{"errors": errorMap}) // Отправляем клиенту карту ошибок
+		if strings.Contains(err.Error(), "already exists") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}) // Возвращаем ошибку клиенту с кодом 400
 		} else {
-			// Если это не ошибка валидации, отправляем общую ошибку сервера
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		}
 		return
 	}
 
-	// Отправляем email с кодом верификации
-	err = SendVerificationEmail(user.Email, verificationCode)
-	if err != nil {
-		log.Printf("Error sending verification email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send verification email"})
-		return
-	}
-
-	c.Status(http.StatusCreated)
+	c.JSON(http.StatusCreated, gin.H{"message": "User created successfully"})
 }
 
-func (h *UserHandler) GetUserByIDHandler(c *gin.Context) {
-	id := c.Param("id")
-	// Преобразовать id в число (uint) и обработать ошибки
-	userID, err := StringToUint(id)
+// GetUserHandler обрабатывает запрос на получение пользователя по ID.
+// GET /users/:id
+func (h *UserHandler) GetUserHandler(c *gin.Context) {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
 		return
 	}
 
-	user, err := h.userService.GetByID(c.Request.Context(), userID)
+	user, err := h.userService.Get(c.Request.Context(), uint(userID))
 	if err != nil {
-		log.Printf("Error getting user by ID: %v", err)
+		log.Printf("Error getting user: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
-		return
-	}
-
-	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, user)
 }
 
-
-func (h *UserHandler) GetUserByEmailHandler(c *gin.Context) {
-	email := c.Query("email")
-
-	if email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is required"})
-		return
-	}
-
-	user, err := h.userService.GetByEmail(c.Request.Context(), email)
+// UpdateUserHandler обрабатывает запрос на обновление пользователя.
+// PUT /users/:id
+func (h *UserHandler) UpdateUserHandler(c *gin.Context) {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
 	if err != nil {
-		log.Printf("Error getting user by email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
 		return
 	}
 
-	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+	var user models.User
+	if err := c.BindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	c.JSON(http.StatusOK, user)
+	user.ID = uint(userID)
+	err = h.userService.Update(c.Request.Context(), &user)
+	if err != nil {
+		log.Printf("Error updating user: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User updated successfully"})
 }
 
-func (h *UserHandler) VerifyEmailHandler(c *gin.Context) {
-	emailAddress := c.Query("email")
-	verificationCode := c.Query("code")
-
-	if emailAddress == "" || verificationCode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email and code are required"})
-		return
-	}
-
-	// Получаем пользователя по email
-	user, err := h.userService.GetByEmail(c.Request.Context(), emailAddress)
+// DeleteUserHandler обрабатывает запрос на удаление пользователя.
+// DELETE /users/:id
+func (h *UserHandler) DeleteUserHandler(c *gin.Context) {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
 	if err != nil {
-		log.Printf("Error getting user by email: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
 		return
 	}
 
-	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-		return
-	}
-
-	// Проверяем код верификации и обновляем статус пользователя
-	if user.VerificationCode == verificationCode && !user.Verified {
-		user.Verified = true
-		err = h.userService.Update(c.Request.Context(), user) // Обновляем пользователя
-		if err != nil {
-			log.Printf("Error updating user: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
-			return
+	err = h.userService.Delete(c.Request.Context(), uint(userID))
+	if err != nil {
+		log.Printf("Error deleting user: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		}
-		c.String(http.StatusOK, "Email verified successfully!")
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid verification code or user already verified"})
+		return
 	}
+
+	c.Status(http.StatusNoContent)
 }
 
-// StringToUint преобразует строку в uint.
-func StringToUint(s string) (uint, error) {
-	var i uint
-	_, err := fmt.Sscan(s, &i)
-	if err != nil {
-		return 0, err
-	}
-	return i, nil
+func (h *UserHandler) LoginHandler(c *gin.Context) {
+	// TODO: Implement login logic
+	c.JSON(http.StatusOK, gin.H{"message": "Login not implemented yet"})
 }

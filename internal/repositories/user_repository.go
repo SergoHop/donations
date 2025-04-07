@@ -3,21 +3,20 @@ package repositories
 import (
 	"context"
 	"fmt"
-	"gorm.io/gorm"
-	
-	"mydonate/internal/models"
-	"mydonate/internal/interfaces"
-)
 
+	"mydonate/internal/models"
+
+	"gorm.io/gorm"
+)
 
 type userRepository struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) interfaces.UserRepository { // <-- Принимаем db
-    return &userRepository{db: db}
+func NewUserRepository(db *gorm.DB) *userRepository {
+	return &userRepository{db: db}
 }
-// Create создает нового пользователя в базе данных.
+
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 	result := r.db.WithContext(ctx).Create(user)
 	if result.Error != nil {
@@ -25,27 +24,21 @@ func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 	}
 	return nil
 }
-// получает пользователя по имаил
-func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+
+func (r *userRepository) Get(ctx context.Context, id uint) (*models.User, error) {
 	var user models.User
-	result := r.db.WithContext(ctx).Where("email = ?", email).First(&user)
+	result := r.db.WithContext(ctx).First(&user, id)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return nil, nil // Пользователь не найден
-		}
-		return nil, fmt.Errorf("ошибка с имаилом: %w", result.Error)
+		return nil, fmt.Errorf("failed to get user: %w", result.Error)
 	}
 	return &user, nil
 }
 
-func (r *userRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
+func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	result := r.db.WithContext(ctx).First(&user, id)
+	result := r.db.WithContext(ctx).Where("email = ?", email).First(&user)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return nil, nil // Пользователь не найден
-		}
-		return nil, fmt.Errorf("ошибка с айди: %w", result.Error)
+		return nil, result.Error // Возвращаем ошибку GORM, чтобы ее можно было обработать в сервисе
 	}
 	return &user, nil
 }
@@ -53,17 +46,18 @@ func (r *userRepository) GetByID(ctx context.Context, id uint) (*models.User, er
 func (r *userRepository) Update(ctx context.Context, user *models.User) error {
 	result := r.db.WithContext(ctx).Save(user)
 	if result.Error != nil {
-		return fmt.Errorf("ошибка с обновление пользователя: %w", result.Error)
+		return fmt.Errorf("failed to update user: %w", result.Error)
 	}
 	return nil
 }
 
-func (r *userRepository) Verify(ctx context.Context, email string, verificationCode string) error {
+func (r *userRepository) Delete(ctx context.Context, id uint) error {
+	result := r.db.WithContext(ctx).Delete(&models.User{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete user: %w", result.Error)
+	}
+	if result.RowsAffected == 0 { // Проверяем, был ли удален хоть один рядок
+		return gorm.ErrRecordNotFound // Если не удален, то возвращаем ошибку "not found"
+	}
 	return nil
 }
-
-
-
-
-
-

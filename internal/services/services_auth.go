@@ -1,98 +1,125 @@
-package services 
+package services
 
 import (
-    "context"
+	"context"
 	"fmt"
 	"log"
+	"os"
 
-    "github.com/go-playground/validator/v10"
-	"mydonate/internal/models"       
 	"mydonate/internal/interfaces"
+	"mydonate/internal/models"
+	"mydonate/internal/utils"
+
+	"github.com/jordan-wright/email"
+	"gorm.io/gorm"
+
+	"net/smtp"
 )
 
-type userService struct {
+type UserService struct {
 	userRepository interfaces.UserRepository
-    validator      *validator.Validate 
 }
 
-
-func NewUserService(userRepository interfaces.UserRepository) interfaces.UserService {
-	return &userService{userRepository: userRepository}
+func NewUserService(userRepository interfaces.UserRepository) *UserService {
+	return &UserService{userRepository: userRepository}
 }
 
-func (s *userService) Create(ctx context.Context, user *models.User) error {
-    if user == nil{
-        return fmt.Errorf("юзер наможа быть нил")
-    }
-    if user.Email == "" {
-		return fmt.Errorf("шо то не то")
+func (s *UserService) Create(ctx context.Context, user *models.User) error {
+	existingUser, err := s.userRepository.GetByEmail(ctx, user.Email)
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("failed to check existing user: %w", err)
 	}
 
-    err := s.userRepository.Create(ctx, user)
-    if err != nil{
-        return fmt.Errorf("фаил ошиька: %w", err)
-    }
-    return nil
-}
+	if err == nil && existingUser != nil {
+		return fmt.Errorf("user with email %s already exists", user.Email)
+	}
 
-func (s *userService) GetByEmail(ctx context.Context, email string) (*models.User, error) {
-    if email == ""{
-        return nil, fmt.Errorf("шо то не то")
-    }
-    user, err := s.userRepository.GetByEmail(ctx, email)
-    if err != nil{
-        return nil, fmt.Errorf("нема такого имаила %w", err)
-    }
-    return user, nil
-}
-
-func (s *userService) GetByID(ctx context.Context, id uint) (*models.User, error) {
-    if id == 0{
-        return nil, fmt.Errorf("гдэ айди")
-    }
-    user, err := s.userRepository.GetByID(ctx, id)
-    if err != nil{
-        return nil, fmt.Errorf("а шо с айди %w", err)
-    }
-    return user, nil
-}
-
-func (s *userService) Update(ctx context.Context, user *models.User) error {
-	//Валидация данных пользователя перед обновлением
-	err := s.validator.Struct(user)
+	// Hash the password
+	salt := utils.GenerateRandomString(16)
+	hashedPassword, err := utils.HashPassword(user.Password + salt)
 	if err != nil {
-		return fmt.Errorf("validation error: %w", err)
+		return fmt.Errorf("failed to hash password: %w", err)
 	}
-	return s.userRepository.Update(ctx, user)
+
+	verificationCode := utils.GenerateRandomString(48)
+
+	user.Password = hashedPassword
+	user.Salt = salt
+	user.VerificationCode = verificationCode
+	user.Verified = false
+
+	err = s.userRepository.Create(ctx, user)
+	if err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
+	}
+
+	err = SendVerificationEmail(user.Email, verificationCode)
+	if err != nil {
+		log.Printf("Error sending verification email: %v", err)
+		return fmt.Errorf("Failed to send verification email")
+	}
+
+	return nil
 }
 
-func (s *userService) Verify(ctx context.Context, email string, verificationCode string) error {
-	// Получаем пользователя по email
-	user, err := s.GetByEmail(ctx, email)
+func (s *UserService) Get(ctx context.Context, id uint) (*models.User, error) {
+	user, err := s.userRepository.Get(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
+	return user, nil
+}
 
-	if user == nil {
-		return fmt.Errorf("user not found")
-	}
-
-	// Проверяем, совпадает ли код верификации
-	if user.VerificationCode != verificationCode {
-		return fmt.Errorf("invalid verification code")
-	}
-
-	if user.Verified {
-		return fmt.Errorf("user already verified")
-	}
-
-	// Обновляем статус пользователя как верифицированного
-	user.Verified = true
-	err = s.Update(ctx, user) // Используем метод Update для сохранения изменений
+func (s *UserService) Update(ctx context.Context, user *models.User) error {
+	err := s.userRepository.Update(ctx, user)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
+	return nil
+}
 
-	log.Printf("User %s verified successfully", email)
+func (s *UserService) Delete(ctx context.Context, id uint) error {
+	err := s.userRepository.Delete(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	return nil
+}
+
+func (s *UserService) VerifyEmail(ctx context.Context, email string, code string) error {
+	user, err := s.userRepository.GetByEmail(ctx, email)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	if user.VerificationCode != code {
+		return fmt.Errorf("invalid verification code")
+	}
+
+	user.Verified = true
+	return s.userRepository.Update(ctx, user)
+}
+
+func SendVerificationEmail(emailAddress string, verificationCode string) error {
+	from := os.Getenv("SMTP_FROM")
+	log.Printf("SMTP_FROM: %s", from)
+	password := os.Getenv("SMTP_PASSWORD")
+	smtpServer := os.Getenv("SMTP_SERVER")
+	smtpPort := os.Getenv("SMTP_PORT")
+
+	e := email.NewEmail()
+	e.From = from
+	e.To = []string{emailAddress}
+	e.Subject = "Подтверждение регистрации"
+	e.HTML = []byte(fmt.Sprintf(`<h1>Здравствуйте!</h1><p>Для подтверждения регистрации, перейдите по ссылке: <a href="http://localhost:8080/verify?email=%s&code=%s">Подтвердить</a></p>`, emailAddress, verificationCode))
+
+	auth := smtp.PlainAuth("", from, password, smtpServer)
+	addr := smtpServer + ":" + smtpPort
+	err := e.Send(addr, auth)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Verification email sent to " + emailAddress)
 	return nil
 }

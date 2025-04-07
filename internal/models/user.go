@@ -1,19 +1,17 @@
 package models
 
-import (
-	"errors"
-	"gorm.io/gorm"
-)
-
-var ErrNoRecord = errors.New("записи нема)")
-
-type User struct{
-	gorm.Model
-	Username string    `gorm:"not null" json:"user"`
-	Password string          `gorm:"not null" json:"pasword"`
-	Email string             `gorm:"uniqueIndex" json:"enail"`
-	VerificationCode string  `gorm:"index"`
-	Verified bool            `gorm:"default:false"`
-	Salt string				 `json:"-"`
+type User struct {
+	ID             uint   `json:"id" gorm:"primaryKey"`
+	Username         string `json:"user"`
+	Password         string `json:"password"`
+	Email            string `json:"email" gorm:"uniqueIndex"`
+	VerificationCode string `json:"verification_code" gorm:"size:255"` // <-- Важно: размер
+	Verified         bool   `json:"verified"`
+	Salt             string `json:"salt"`
 }
 
+type RegisterBody struct {
+	Email    string `json:"email"`
+	Password string `json:"pasword"`
+	User     string `json:"user"`
+}

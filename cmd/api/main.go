@@ -1,61 +1,70 @@
 package main
 
 import (
-	
+	"fmt"
 	"log"
-	
 	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
-	"mydonate/internal/config"
 	"mydonate/internal/handlers"
-	"mydonate/pkg/database"
+	_ "mydonate/internal/interfaces"
 	"mydonate/internal/repositories"
+	"mydonate/internal/models"
 	"mydonate/internal/services"
 )
 
 func main() {
-	// Загрузка переменных окружения из .env файла
+	// Load environment variables from .env file
 	err := godotenv.Load()
 	if err != nil {
-		log.Printf("Error loading .env file: %v", err)
+		log.Fatal("Error loading .env file")
 	}
 
-	// Загрузка конфигурации
-	cfg := config.LoadConfig()
+	// Database configuration
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPass := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
 
-	database.InitDB(cfg)
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", dbHost, dbPort, dbUser, dbPass, dbName)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
-	db := database.GetDB()
+	// Auto-migrate the schema
+	db.AutoMigrate(&models.User{})
 
-	// Инициализация репозитория
+	// Initialize repositories
 	userRepository := repositories.NewUserRepository(db)
 
-	// Инициализация сервиса
+	// Initialize services
 	userService := services.NewUserService(userRepository)
 
-	// Инициализация обработчиков
+	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
 
-	// Создание Gin router
+	// Gin setup
 	router := gin.Default()
 
-	// Определение маршрутов
+	// Routes
 	router.POST("/register", userHandler.CreateUserHandler)
-	router.GET("/verify", userHandler.VerifyEmailHandler)
-	router.GET("/users/:id", userHandler.GetUserByIDHandler)
-	router.GET("/users", userHandler.GetUserByEmailHandler)
+	router.POST("/login", userHandler.LoginHandler)
+	router.GET("/users/:id", userHandler.GetUserHandler)
+	router.PUT("/users/:id", userHandler.UpdateUserHandler)
+	router.DELETE("/users/:id", userHandler.DeleteUserHandler)
+	router.GET("/verify", userHandler.VerifyHandler) // Добавляем маршрут для подтверждения email
 
-	// Запуск сервера
+	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
-		log.Printf("Defaulting to port %s", port)
+		port = "8080" // Default port if not specified
 	}
-
-	log.Printf("Server is running on port %s", port)
-	log.Fatal(router.Run(":" + port))
+	log.Printf("Starting server on :%s", port)
+	router.Run(":" + port)
 }
